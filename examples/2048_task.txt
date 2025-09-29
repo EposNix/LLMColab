@@ -1,0 +1,1 @@
+Program 2048 Ultimate Edition in Python with Pygame. Include clean architecture, input handling, animations, and tests.

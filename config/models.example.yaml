@@ -1,0 +1,4 @@
+# Example LiteLLM model configuration
+models:
+  - anthropic/claude-3-5-sonnet-latest
+  - gemini/gemini-1.5-pro-latest

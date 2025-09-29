@@ -352,3 +352,51 @@ Run: `streamlit run src/gui_streamlit.py`
 * Multi-agent orchestration with dynamic roles
 * Automated evaluation harness (BLEU for text, pytest for code, rubric LLM for style)
 
+---
+
+## Quickstart
+
+1. Install dependencies (ideally in a virtual environment):
+
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+2. Export the API keys for the providers you plan to use. LiteLLM reads the same
+   environment variables as the official SDKs, for example:
+
+   ```bash
+   export ANTHROPIC_API_KEY=your_key
+   export GOOGLE_API_KEY=your_key
+   ```
+
+3. Run the orchestrator (the command below assumes you are in the repo root and
+   have `src/` on `PYTHONPATH`):
+
+   ```bash
+   export PYTHONPATH=src
+   python -m llm_collaborator.llm_collaborator \
+     --task "Program 2048 Ultimate Edition in Python with Pygame." \
+     --models "anthropic/claude-3-5-sonnet-latest,gemini/gemini-1.5-pro-latest" \
+     --iters 3 \
+     --out outputs/2048.md
+   ```
+
+   You can also supply `--task-file path/to/task.txt` instead of `--task`.
+
+4. (Optional) Launch the Streamlit demo:
+
+   ```bash
+   export PYTHONPATH=src
+   streamlit run src/gui_streamlit.py
+   ```
+
+## Testing
+
+Install the dev dependencies and run the unit tests:
+
+```bash
+pip install -r requirements-dev.txt
+PYTHONPATH=src pytest
+```
+
