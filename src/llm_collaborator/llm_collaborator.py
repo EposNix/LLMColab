@@ -5,7 +5,8 @@ import argparse
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Sequence, Tuple, Union
+from typing import Any, List, Optional, Sequence, Tuple, Union
+from collections.abc import Mapping, Sequence as SequenceABC
 
 from tenacity import retry, stop_after_attempt, wait_random_exponential
 
@@ -45,7 +46,7 @@ class CollaborationResult:
     stop=stop_after_attempt(4),
     wait=wait_random_exponential(multiplier=1, max=20),
 )
-def _completion_with_retry(*, model: str, messages: List[dict], temperature: float) -> dict:
+def _completion_with_retry(*, model: str, messages: List[dict], temperature: float) -> Any:
     if completion is None:
         raise LiteLLMNotInstalledError(
             "LiteLLM is required. Install it via `pip install litellm`."
@@ -57,20 +58,82 @@ def _completion_with_retry(*, model: str, messages: List[dict], temperature: flo
         raise ModelInvocationError(str(exc)) from exc
 
 
-def _extract_text(response: dict) -> str:
+def _response_to_dict(response: Any) -> dict:
+    """Best-effort conversion of LiteLLM responses to plain dictionaries."""
+
+    if isinstance(response, Mapping):
+        return dict(response)
+    for attr in ("model_dump", "dict"):
+        if hasattr(response, attr):
+            method = getattr(response, attr)
+            try:
+                data = method()
+            except TypeError:
+                continue
+            if isinstance(data, Mapping):
+                return dict(data)
+    return {}
+
+
+def _coerce_content(value: Any) -> Optional[str]:
+    """Convert LiteLLM message content into a text string when possible."""
+
+    if isinstance(value, str):
+        return value
+    if isinstance(value, SequenceABC):
+        parts: List[str] = []
+        for item in value:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, Mapping):
+                text = item.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+            elif hasattr(item, "text") and isinstance(getattr(item, "text"), str):
+                parts.append(getattr(item, "text"))
+        if parts:
+            return "".join(parts)
+    return None
+
+
+def _extract_text(response: Any) -> str:
     """Extract the message content from a LiteLLM completion response."""
 
-    if "choices" in response and response["choices"]:
-        choice = response["choices"][0]
-        message = choice.get("message") if isinstance(choice, dict) else None
-        if message and isinstance(message, dict):
-            content = message.get("content")
-            if isinstance(content, str):
+    data = _response_to_dict(response)
+
+    choices = data.get("choices") if isinstance(data, Mapping) else None
+    if isinstance(choices, list) and choices:
+        first_choice = choices[0]
+        message: Optional[Mapping[str, Any]] = None
+        if isinstance(first_choice, Mapping):
+            raw_message = first_choice.get("message")
+            if isinstance(raw_message, Mapping):
+                message = raw_message
+        if message:
+            content = _coerce_content(message.get("content"))
+            if content is not None:
                 return content
-            if isinstance(content, list):  # e.g., OpenAI responses with tool usage
-                return "".join(part.get("text", "") for part in content if isinstance(part, dict))
-    if "output" in response and isinstance(response["output"], str):
-        return response["output"]
+
+    for key in ("output", "output_text"):
+        value = data.get(key) if isinstance(data, Mapping) else None
+        text = _coerce_content(value)
+        if text:
+            return text
+
+    choices_attr = getattr(response, "choices", None)
+    if isinstance(choices_attr, SequenceABC) and choices_attr:
+        first_choice = choices_attr[0]
+        message = getattr(first_choice, "message", None)
+        if message is not None:
+            content = _coerce_content(getattr(message, "content", None))
+            if content is not None:
+                return content
+
+    output_text_attr = getattr(response, "output_text", None)
+    text = _coerce_content(output_text_attr)
+    if text:
+        return text
+
     raise ValueError("Unable to extract message content from model response")
 
 
@@ -145,7 +208,17 @@ def run_collaboration(
         history.append((model.name, critique, draft))
         critique_summaries.append(f"{model.name}: {critique.strip()}")
 
-        usage = response.get("usage") if isinstance(response, dict) else None
+        response_dict = _response_to_dict(response)
+        usage: Optional[Any]
+        if response_dict:
+            usage = response_dict.get("usage")
+        else:
+            usage = getattr(response, "usage", None)
+        if hasattr(usage, "model_dump"):
+            try:
+                usage = usage.model_dump()
+            except TypeError:
+                usage = None
         log_iteration(
             logger,
             iteration=turn,
