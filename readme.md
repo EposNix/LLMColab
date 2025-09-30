@@ -10,11 +10,8 @@ A CLI (and GUI) that:
 
 * Accepts a **task** (“Program 2048 Ultimate Edition”).
 * Accepts a **sequence of models** (e.g., Claude ↔︎ Gemini).
-* Runs **N iterations** where each model:
-
-  1. Reads the original task and the latest draft,
-  2. Produces a short `<critique>`,
-  3. Outputs a revised `<draft>`.
+* Runs **N iterations** where each model reads the task and the latest draft,
+  then delivers constructive feedback alongside an updated draft in a single response.
 
 We stop when we hit the iteration cap or when the draft **converges** (change is negligible).
 
@@ -24,7 +21,7 @@ We stop when we hit the iteration cap or when the draft **converges** (change is
 
 * **Simplicity**: Single binary/script, no external DB required.
 * **Interchangeable models**: LiteLLM abstracts providers (Anthropic, Google, OpenAI, Mistral, Bedrock, Vertex, Ollama, etc.), so ops is just picking model IDs and exporting keys.
-* **Deterministic collaboration format**: We force the schema `<critique>` + `<draft>` to keep tokens lean and outputs stable.
+* **Consistent collaboration loop**: Each turn provides the model with the task, the latest draft, and short summaries so it can respond with an improved draft.
 
 ---
 
@@ -83,9 +80,9 @@ build_messages(task, last_draft, actor_name)
 LiteLLM.completion(model, messages)
         │
         ▼
-parse <critique> and <draft>
+capture model response
         │
-        ├─► log usage (tokens/$) + critique summary
+        ├─► log usage (tokens/$) + response summary
         └─► update last_draft and iterate or stop
 ```
 
@@ -96,7 +93,7 @@ parse <critique> and <draft>
 We already supplied a working `llm_collaborator.py` that:
 
 * Alternates models for `--iters` turns,
-* Enforces the `<critique>` `<draft>` schema,
+* Captures the full model response without enforcing a strict schema,
 * Clips context to avoid token explosions,
 * Retries transient failures with jittered backoff,
 * Optionally early-stops on convergence.
@@ -126,22 +123,9 @@ python src/llm_collaborator.py \
 
 We use a system prompt that:
 
-* Explains collaboration,
-* Requires a **brief** `<critique>`,
-* Requires a **self-contained** `<draft>`,
-* Instructs the model to put code into **one** fenced block when applicable.
-
-> Why XML tags? They’re reliably parsable and models don’t “decorate” them as much as markdown headings.
-
-**Template excerpt:**
-
-```text
-Respond EXACTLY with two XML sections in THIS order and nothing else:
-<critique>...</critique>
-<draft>
-...the improved draft...
-</draft>
-```
+* Explains the collaboration loop,
+* Encourages concise feedback before providing the updated draft,
+* Instructs the model to keep responses cohesive and include code in a single fenced block when helpful.
 
 ---
 
@@ -198,7 +182,7 @@ CLI could accept `--config config/models.yaml` and override flags win.
 * LiteLLM returns OpenAI-style responses; when available, read `resp.usage` for prompt/completion tokens. If missing, optionally estimate with `tiktoken` (best-effort).
 * At minimum, log per-iteration:
 
-  * provider/model id, latency, token counts (if present), critique length, draft size.
+  * provider/model id, latency, token counts (if present), response length.
 * Emit **JSON lines** so we can graph costs later.
 
 Example (pseudo):
@@ -218,23 +202,24 @@ print(json.dumps(info))
 
 ## 12) Optional diff/patch mode (token diet deluxe)
 
-Ask each turn to output a minimal **unified diff** against the current draft:
+Ask each turn to output a minimal **unified diff** against the current draft, followed by the full updated draft:
 
 ```
-<critique>...</critique>
-<patch>
+Feedback: quick summary of the change
+Patch:
 --- prev.md
 +++ new.md
 @@
 - old line
 + new line
-</patch>
-<draft>...FULL NEW DRAFT (fallback if patch fails)...</draft>
+
+Full draft:
+...the updated draft as a fallback...
 ```
 
 Your code:
 
-* Attempts to apply `<patch>` locally (e.g., `difflib` or `unidiff`).
+* Attempts to apply the provided patch locally (e.g., `difflib` or `unidiff`).
 * If patch applies cleanly, skip sending the whole draft back next turn—send only **task + latest FULL draft** (still required), but you can store patch history for efficiency and auditing.
 
 This cuts tokens and makes changes auditable.
@@ -267,10 +252,10 @@ if go:
         temperature=temp,
         verbose=False
     )
-    with st.expander("Turn-by-turn critiques"):
-        for idx, (model, critique, draft) in enumerate(history, 1):
+    with st.expander("Turn-by-turn responses"):
+        for idx, (model, content) in enumerate(history, 1):
             st.markdown(f"**Turn {idx} — {model}**")
-            st.write(critique)
+            st.write(content)
     st.subheader("Final Draft")
     st.code(final)
 ```
@@ -292,12 +277,12 @@ Run: `streamlit run src/gui_streamlit.py`
 
 * **Unit**:
 
-  * `extract_sections()` robust to missing tags.
+  * Message builder includes task, prior draft, and recent summaries.
   * Convergence detector with crafted strings.
   * Context clipper length guarantees.
 * **Integration (mocked)**:
 
-  * Stub LiteLLM `.completion()` to return known `<critique>/<draft>` pairs and verify iteration order, early-stop behavior, and output file writing.
+  * Stub LiteLLM `.completion()` to return known responses and verify iteration order, early-stop behavior, and output file writing.
 * **Golden tests**:
 
   * Store small tasks and expected drafts (or invariants like “contains section headers”), not brittle full matches.
@@ -318,11 +303,11 @@ Run: `streamlit run src/gui_streamlit.py`
 * **Role specialization**: Provide per-model system prompts:
 
   * Architect → Implementer → Reviewer → Optimizer
-* **Dynamic routing**: Use a cheap router model to decide the next specialist given the critique.
+* **Dynamic routing**: Use a cheap router model to decide the next specialist given the latest response.
 * **RAG flavor**: Add a retrieval step before each turn (vector DB / local files).
 * **Guardrails**: Add content filters / PII scrubbing before sending drafts downstream.
 * **Artifact outputs**: Support multi-file projects (zip output, structured repo layout).
-* **CI hook**: When task = “write code,” optionally run tests and feed failures back into the critique.
+* **CI hook**: When task = “write code,” optionally run tests and feed failures back into the loop.
 
 ---
 

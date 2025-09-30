@@ -20,10 +20,6 @@ try:  # pragma: no cover - import guard for optional dependency discovery
 except ImportError as exc:  # pragma: no cover
     completion = None  # type: ignore[assignment]
 
-CRITIQUE_TAG = "critique"
-DRAFT_TAG = "draft"
-
-
 class LiteLLMNotInstalledError(RuntimeError):
     """Raised when LiteLLM is not installed but required."""
 
@@ -37,7 +33,7 @@ class CollaborationResult:
     """Container for the result of a collaboration run."""
 
     final_draft: str
-    history: List[Tuple[str, str, str]]
+    history: List[Tuple[str, str]]
     convergence: Optional[ConvergenceResult]
 
 
@@ -137,28 +133,6 @@ def _extract_text(response: Any) -> str:
     raise ValueError("Unable to extract message content from model response")
 
 
-def _extract_tagged_section(text: str, tag: str) -> Optional[str]:
-    start_tag = f"<{tag}>"
-    end_tag = f"</{tag}>"
-    if start_tag not in text or end_tag not in text:
-        return None
-    start = text.index(start_tag) + len(start_tag)
-    end = text.index(end_tag, start)
-    return text[start:end].strip()
-
-
-def extract_sections(text: str) -> Tuple[str, str]:
-    """Extract the <critique> and <draft> sections from model output."""
-
-    critique = _extract_tagged_section(text, CRITIQUE_TAG)
-    draft = _extract_tagged_section(text, DRAFT_TAG)
-    if not critique or not draft:
-        raise ValueError(
-            "Model response must include <critique> and <draft> sections."
-        )
-    return critique, draft
-
-
 def run_collaboration(
     *,
     task: str,
@@ -188,8 +162,8 @@ def run_collaboration(
     if not models:
         raise ValueError("No models provided")
 
-    history: List[Tuple[str, str, str]] = []
-    critique_summaries: List[str] = []
+    history: List[Tuple[str, str]] = []
+    response_summaries: List[str] = []
     last_draft: Optional[str] = None
     convergence_info: Optional[ConvergenceResult] = None
 
@@ -199,14 +173,17 @@ def run_collaboration(
             task=task,
             last_draft=last_draft,
             actor_name=model.name,
-            critique_summaries=critique_summaries[-3:],
+            response_summaries=response_summaries[-3:],
         )
 
         response = _completion_with_retry(model=model.name, messages=messages, temperature=temperature)
         content = _extract_text(response)
-        critique, draft = extract_sections(content)
-        history.append((model.name, critique, draft))
-        critique_summaries.append(f"{model.name}: {critique.strip()}")
+        history.append((model.name, content))
+
+        summary = content.strip()
+        if len(summary) > 200:
+            summary = summary[:200].rstrip() + "…"
+        response_summaries.append(f"{model.name}: {summary}")
 
         response_dict = _response_to_dict(response)
         usage: Optional[Any]
@@ -223,23 +200,22 @@ def run_collaboration(
             logger,
             iteration=turn,
             model_name=model.name,
-            critique=critique,
-            draft_preview=draft[:500],
+            response_preview=content[:500],
             usage=usage,
         )
 
         if last_draft is not None and stop_on_convergence:
-            convergence_info = has_converged(last_draft, draft, convergence_threshold)
+            convergence_info = has_converged(last_draft, content, convergence_threshold)
             if convergence_info.converged:
                 logger.info(
                     "Converged after %s iterations (similarity=%.3f)",
                     turn,
                     convergence_info.similarity,
                 )
-                last_draft = draft
+                last_draft = content
                 break
 
-        last_draft = draft
+        last_draft = content
 
     if last_draft is None:
         raise RuntimeError("No draft was produced during the collaboration")
