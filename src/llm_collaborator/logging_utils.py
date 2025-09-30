@@ -27,8 +27,7 @@ def log_iteration(
     *,
     iteration: int,
     model_name: str,
-    critique: str,
-    draft_preview: str,
+    response_preview: str,
     usage: Optional[dict] = None,
 ) -> None:
     """Log an iteration in a structured format."""
@@ -36,8 +35,7 @@ def log_iteration(
     payload: dict[str, Any] = {
         "iteration": iteration,
         "model": model_name,
-        "critique": critique.strip(),
-        "draft_preview": draft_preview.strip()[:200],
+        "response_preview": response_preview.strip()[:200],
     }
     if usage:
         payload["usage"] = usage

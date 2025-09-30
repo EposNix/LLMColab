@@ -3,17 +3,10 @@ from unittest.mock import patch
 from llm_collaborator.llm_collaborator import (
     CollaborationResult,
     _extract_text,
-    extract_sections,
     run_collaboration,
 )
 
 from litellm.utils import Choices, Message, ModelResponse, Usage
-
-
-def test_extract_sections_parses_xml():
-    critique, draft = extract_sections("<critique>Note</critique><draft>Body</draft>")
-    assert critique == "Note"
-    assert draft == "Body"
 
 
 def test_run_collaboration_uses_round_robin_models():
@@ -21,14 +14,14 @@ def test_run_collaboration_uses_round_robin_models():
         {
             "choices": [
                 {
-                    "message": {"content": "<critique>First</critique><draft>Draft1</draft>"}
+                    "message": {"content": "Model A first response"}
                 }
             ]
         },
         {
             "choices": [
                 {
-                    "message": {"content": "<critique>Second</critique><draft>Draft2</draft>"}
+                    "message": {"content": "Model B second response"}
                 }
             ]
         },
@@ -43,9 +36,12 @@ def test_run_collaboration_uses_round_robin_models():
         )
 
     assert isinstance(result, CollaborationResult)
-    assert result.final_draft == "Draft2"
+    assert result.final_draft == "Model B second response"
     assert [entry[0] for entry in result.history] == ["model-a", "model-b"]
-    assert [entry[1] for entry in result.history] == ["First", "Second"]
+    assert [entry[1] for entry in result.history] == [
+        "Model A first response",
+        "Model B second response",
+    ]
 
 
 def test_extract_text_supports_model_response_object():
@@ -58,7 +54,7 @@ def test_extract_text_supports_model_response_object():
                 finish_reason="stop",
                 index=0,
                 message=Message(
-                    content="<critique>Note</critique><draft>Body</draft>",
+                    content="Here is a combined response body.",
                     role="assistant",
                 ),
             )
@@ -68,8 +64,7 @@ def test_extract_text_supports_model_response_object():
 
     text = _extract_text(response)
 
-    assert "<critique>Note</critique>" in text
-    assert "<draft>Body</draft>" in text
+    assert "combined response body" in text
 
 
 def test_run_collaboration_accepts_model_response_objects():
@@ -83,7 +78,7 @@ def test_run_collaboration_accepts_model_response_objects():
                     finish_reason="stop",
                     index=0,
                     message=Message(
-                        content="<critique>Alpha</critique><draft>Draft1</draft>",
+                        content="Alpha turn response",
                         role="assistant",
                     ),
                 )
@@ -99,7 +94,7 @@ def test_run_collaboration_accepts_model_response_objects():
                     finish_reason="stop",
                     index=0,
                     message=Message(
-                        content="<critique>Beta</critique><draft>Draft2</draft>",
+                        content="Beta follow-up response",
                         role="assistant",
                     ),
                 )
@@ -116,6 +111,9 @@ def test_run_collaboration_accepts_model_response_objects():
             stop_on_convergence=False,
         )
 
-    assert result.final_draft == "Draft2"
+    assert result.final_draft == "Beta follow-up response"
     assert [entry[0] for entry in result.history] == ["model-a", "model-b"]
-    assert [entry[1] for entry in result.history] == ["Alpha", "Beta"]
+    assert [entry[1] for entry in result.history] == [
+        "Alpha turn response",
+        "Beta follow-up response",
+    ]

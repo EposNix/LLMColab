@@ -13,7 +13,7 @@ st.markdown(
     """
 This demo wraps the core collaboration loop. Provide a task, select a sequence of
 models (comma separated LiteLLM identifiers), and choose how many turns to run.
-Outputs show each critique and the final draft.
+Outputs show each model response and the final draft.
 """
 )
 
@@ -49,10 +49,10 @@ if go:
             except Exception as exc:  # pragma: no cover - interactive surface
                 st.error(f"Failed to run collaboration: {exc}")
             else:
-                with st.expander("Turn-by-turn critiques"):
-                    for idx, (model_name, critique, draft) in enumerate(result.history, start=1):
+                with st.expander("Turn-by-turn responses"):
+                    for idx, (model_name, content) in enumerate(result.history, start=1):
                         st.markdown(f"**Turn {idx} — {model_name}**")
-                        st.markdown(critique)
+                        st.markdown(content)
                 st.subheader("Final Draft")
                 st.code(result.final_draft)
                 if result.convergence:
